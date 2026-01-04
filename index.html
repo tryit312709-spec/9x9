@@ -27,11 +27,20 @@
         const { useState, useEffect, useCallback } = React;
 
         // --- Firebase 初始化 ---
-        const firebaseConfig = JSON.parse(__firebase_config); 
+        // 修復：增加對環境變數的檢查，避免 ReferenceError
+        let firebaseConfig = {};
+        try {
+            if (typeof __firebase_config !== 'undefined') {
+                firebaseConfig = JSON.parse(__firebase_config);
+            }
+        } catch (e) {
+            console.error("Firebase config parse error", e);
+        }
+
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'multiplication-master';
 
         // 使用 compat 模式初始化
-        if (!firebase.apps.length) {
+        if (firebaseConfig.apiKey && !firebase.apps.length) {
             firebase.initializeApp(firebaseConfig);
         }
         const auth = firebase.auth();
