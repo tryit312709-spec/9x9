@@ -11,7 +11,7 @@
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
     <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Firebase SDKs (Compat v10) -->
+    <!-- Firebase SDKs (Compat v10) - 統一版本以確保相容性 -->
     <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-app-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-auth-compat.js"></script>
     <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-firestore-compat.js"></script>
@@ -35,18 +35,26 @@
         const { useState, useEffect, useCallback, useRef } = React;
 
         // --- 1. Firebase 初始化與環境配置 ---
-        const firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        let firebaseConfig = {};
+        try {
+            firebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        } catch (e) {
+            console.error("Firebase config parse error", e);
+        }
+
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'multiplication-master-web';
 
+        // 檢查 API Key 確保不會在無設定狀態下崩潰
         if (!firebase.apps.length && firebaseConfig.apiKey) {
             firebase.initializeApp(firebaseConfig);
+        } else if (!firebaseConfig.apiKey) {
+            console.warn("Firebase API Key is missing. Leaderboard will not work.");
         }
 
         const auth = firebase.auth();
         const db = firebase.firestore();
 
-        // --- 2. 核心路徑定義 (必須嚴格遵守 Rule 1) ---
-        // 公共排行榜路徑: /artifacts/{appId}/public/data/leaderboard
+        // --- 2. 核心路徑定義 ---
         const LEADERBOARD_PATH = `artifacts/${appId}/public/data/leaderboard`;
 
         const REWARDS = [
@@ -76,9 +84,10 @@
             const [startTime, setStartTime] = useState(0);
             const isSaving = useRef(false);
 
-            // 登入邏輯 (Rule 3: Auth First)
+            // 登入邏輯
             useEffect(() => {
                 const initAuth = async () => {
+                    if (!firebaseConfig.apiKey) return;
                     try {
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await auth.signInWithCustomToken(__initial_auth_token);
@@ -90,17 +99,18 @@
                     }
                 };
                 initAuth();
-                const unsubscribe = auth.onAuthStateChanged(setUser);
+                const unsubscribe = auth.onAuthStateChanged((u) => {
+                    setUser(u);
+                });
                 return () => unsubscribe();
             }, []);
 
-            // 監聽排行榜 (Rule 2: No Complex Queries)
+            // 監聽排行榜
             useEffect(() => {
-                if (!user) return;
+                if (!user || !firebaseConfig.apiKey) return;
                 
                 const unsubscribe = db.collection(LEADERBOARD_PATH).onSnapshot((snapshot) => {
                     const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    // 於前端進行排序與截取，避免需要複合索引
                     const sorted = data.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 10);
                     setLeaderboard(sorted);
                 }, (error) => {
@@ -124,8 +134,7 @@
                 isSaving.current = true;
                 setGameState('GAMEOVER');
                 
-                // 只有在登入狀態下才存檔
-                if (user && userName.trim()) {
+                if (user && userName.trim() && firebaseConfig.apiKey) {
                     try {
                         await db.collection(LEADERBOARD_PATH).add({
                             name: userName,
@@ -209,7 +218,13 @@
                                         className="w-full border-2 border-pink-100 rounded-2xl px-4 py-3 text-center focus:outline-none focus:border-pink-400 text-lg bg-pink-50/30 shadow-inner"
                                     />
                                 </div>
-                                <button onClick={() => userName.trim() && (setScore(0), setQuestionCount(0), setFails(0), setGameState('PLAYING'), generateQuestion())} className="bg-pink-500 text-white font-black py-4 rounded-2xl shadow-lg text-xl btn-active transition-all">開始挑戰</button>
+                                <button 
+                                    onClick={() => userName.trim() && (setScore(0), setQuestionCount(0), setFails(0), setGameState('PLAYING'), generateQuestion())} 
+                                    className="bg-pink-500 text-white font-black py-4 rounded-2xl shadow-lg text-xl btn-active transition-all disabled:opacity-50"
+                                    disabled={!userName.trim()}
+                                >
+                                    開始挑戰
+                                </button>
                                 
                                 <div className="mt-4">
                                     <h2 className="font-bold text-pink-600 border-b-2 border-pink-100 mb-3 pb-1 flex items-center gap-2">🏆 全球名人榜</h2>
