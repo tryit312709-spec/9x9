@@ -4,64 +4,55 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>🌸 九九乘法大挑戰 🌸</title>
+    <!-- Tailwind CSS -->
     <script src="https://cdn.tailwindcss.com"></script>
+    <!-- React & ReactDOM -->
     <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
     <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+    <!-- Babel for JSX -->
     <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
-    <!-- Firebase SDKs -->
-    <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-app-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-auth-compat.js"></script>
-    <script src="https://www.gstatic.com/firebasejs/10.1.0/firebase-firestore-compat.js"></script>
+    <!-- Firebase SDKs (Compat version) -->
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-app-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-auth-compat.js"></script>
+    <script src="https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore-compat.js"></script>
     <style>
         @import url('https://fonts.googleapis.com/css2?family=Noto+Sans+TC:wght@400;700;900&display=swap');
-        body { font-family: 'Noto Sans TC', sans-serif; background-color: #fff1f2; margin: 0; padding: 0; }
-        .btn-active:active { transform: scale(0.95); }
+        body { font-family: 'Noto Sans TC', sans-serif; }
     </style>
 </head>
-<body>
+<body class="bg-pink-50">
     <div id="root"></div>
 
     <script type="text/babel">
-        const { useState, useEffect, useCallback, useRef } = React;
+        const { useState, useEffect, useCallback } = React;
 
-        // --- Firebase 安全初始化防護層 ---
-        let db = null;
-        let auth = null;
-        let isFirebaseEnabled = false;
+        // --- Firebase 初始化 ---
+        const firebaseConfig = JSON.parse(__firebase_config); 
+        const appId = typeof __app_id !== 'undefined' ? __app_id : 'multiplication-master';
 
-        const initFirebase = () => {
-            try {
-                const configStr = typeof __firebase_config !== 'undefined' ? __firebase_config : null;
-                if (configStr) {
-                    const config = JSON.parse(configStr);
-                    if (config.apiKey && !firebase.apps.length) {
-                        firebase.initializeApp(config);
-                        db = firebase.firestore();
-                        auth = firebase.auth();
-                        isFirebaseEnabled = true;
-                        console.log("Firebase 載入成功");
-                    }
-                }
-            } catch (e) {
-                console.warn("Firebase 初始化跳過 (環境變數未設定或格式錯誤)");
-            }
-        };
-
-        initFirebase();
+        // 使用 compat 模式初始化
+        if (!firebase.apps.length) {
+            firebase.initializeApp(firebaseConfig);
+        }
+        const auth = firebase.auth();
+        const db = firebase.firestore();
 
         const REWARDS = [
-            { threshold: 0, name: '初學者', icon: '🐣' },
-            { threshold: 100, name: '庫洛米', icon: '😈' },
-            { threshold: 200, name: '美樂蒂', icon: '🐰' },
-            { threshold: 300, name: '大耳狗', icon: '🐶' },
-            { threshold: 400, name: '凱蒂貓', icon: '🐱' },
-            { threshold: 500, name: '榮耀皇冠', icon: '👑' }
+            { threshold: 0, name: '初學者', icon: '🐣', color: 'bg-gray-100' },
+            { threshold: 50, name: '小試身手', icon: '🐥', color: 'bg-orange-50' },
+            { threshold: 100, name: '庫洛米 Kuromi', icon: '😈', color: 'bg-purple-100' },
+            { threshold: 150, name: '美樂蒂 My Melody', icon: '🐰', color: 'bg-pink-100' },
+            { threshold: 200, name: '大耳狗 Cinnamoroll', icon: '🐶', color: 'bg-blue-50' },
+            { threshold: 250, name: '布丁狗 Pompompurin', icon: '🍮', color: 'bg-yellow-50' },
+            { threshold: 300, name: '凱蒂貓 Hello Kitty', icon: '🐱', color: 'bg-red-50' },
+            { threshold: 400, name: '雷歐 Leo', icon: '🦁', color: 'bg-orange-100' },
+            { threshold: 500, name: '榮耀皇冠', icon: '👑', color: 'bg-yellow-200' },
         ];
 
         function App() {
             const [user, setUser] = useState(null);
-            const [userName, setUserName] = useState('');
-            const [gameState, setGameState] = useState('LOBBY'); // LOBBY, PLAYING, GAMEOVER
+            const [userName, setUserName] = useState(localStorage.getItem('saved_player_name') || '');
+            const [gameState, setGameState] = useState('LOBBY');
             const [score, setScore] = useState(0);
             const [questionCount, setQuestionCount] = useState(0);
             const [fails, setFails] = useState(0);
@@ -70,12 +61,12 @@
             const [timeLeft, setTimeLeft] = useState(10);
             const [feedback, setFeedback] = useState(null);
             const [leaderboard, setLeaderboard] = useState([]);
+            const [startTime, setStartTime] = useState(0);
+            const [isSubmitting, setIsSubmitting] = useState(false);
 
-            // 處理登入與監聽
+            // 1. 處理身份驗證 (Rule 3)
             useEffect(() => {
-                if (!isFirebaseEnabled) return;
-
-                const login = async () => {
+                const initAuth = async () => {
                     try {
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
                             await auth.signInWithCustomToken(__initial_auth_token);
@@ -84,79 +75,86 @@
                         }
                     } catch (e) { console.error("Auth error", e); }
                 };
-                login();
-
-                const unsubscribeAuth = auth.onAuthStateChanged(u => setUser(u));
-                
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'demo-app';
-                const unsubscribeLB = db.collection(`artifacts/${appId}/public/data/leaderboard`)
-                    .onSnapshot(snap => {
-                        const list = snap.docs.map(doc => doc.data())
-                            .sort((a, b) => b.score - a.score)
-                            .slice(0, 5);
-                        setLeaderboard(list);
-                    }, err => console.log("排行榜載入跳過 (權限尚未設定)"));
-
-                return () => { unsubscribeAuth(); unsubscribeLB(); };
+                initAuth();
+                return auth.onAuthStateChanged(setUser);
             }, []);
 
-            const generateQuestion = () => {
+            // 2. 排行榜監聽 (Rule 1 & 2)
+            useEffect(() => {
+                if (!user) return;
+                
+                const lbCollection = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard');
+                
+                const unsubscribe = lbCollection.onSnapshot((snapshot) => {
+                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                    const sorted = data.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 10);
+                    setLeaderboard(sorted);
+                }, (err) => {
+                    console.error("Firestore snapshot error:", err);
+                });
+
+                return () => unsubscribe();
+            }, [user]);
+
+            const generateQuestion = useCallback(() => {
                 const a = Math.floor(Math.random() * 9) + 1;
                 const b = Math.floor(Math.random() * 9) + 1;
                 setCurrentQuestion({ a, b, ans: a * b });
                 setUserInput('');
                 setTimeLeft(10);
+                setStartTime(Date.now());
                 setFeedback(null);
-            };
+            }, []);
 
-            const startGame = () => {
-                if (!userName.trim()) return;
-                setScore(0);
-                setFails(0);
-                setQuestionCount(0);
-                setGameState('PLAYING');
-                generateQuestion();
-            };
-
-            const submitScore = async (finalScore) => {
-                if (!isFirebaseEnabled || !user) return;
-                const appId = typeof __app_id !== 'undefined' ? __app_id : 'demo-app';
+            const saveScore = async (finalScore) => {
+                if (!user || !userName.trim()) return;
+                setIsSubmitting(true);
                 try {
-                    await db.collection(`artifacts/${appId}/public/data/leaderboard`).add({
-                        name: userName,
+                    const lbCollection = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard');
+                    await lbCollection.add({
+                        name: userName.trim(),
                         score: finalScore,
                         uid: user.uid,
                         createdAt: firebase.firestore.FieldValue.serverTimestamp()
                     });
-                } catch (e) { console.error("Save score error", e); }
+                } catch (e) {
+                    console.error("Error adding document: ", e);
+                } finally {
+                    setIsSubmitting(false);
+                    setGameState('GAMEOVER');
+                }
             };
 
-            const handleAnswer = (val) => {
+            const handleAnswer = (input) => {
                 if (feedback) return;
-                const isCorrect = parseInt(val) === currentQuestion.ans;
-                let newScore = score;
-                let newFails = fails;
+                const isTimeout = input === null;
+                const playerAns = parseInt(userInput);
+                const isCorrect = !isTimeout && playerAns === currentQuestion.ans;
+                let currentScore = score;
+                let currentFails = fails;
 
                 if (isCorrect) {
-                    const pts = timeLeft > 5 ? 5 : 2;
-                    newScore += pts;
-                    setScore(newScore);
-                    setFeedback({ type: 'PASS', text: `+${pts} 正確!` });
+                    const timeTaken = (Date.now() - startTime) / 1000;
+                    let points = timeTaken <= 2 ? 5 : timeTaken <= 4 ? 4 : timeTaken <= 6 ? 3 : timeTaken <= 8 ? 2 : 1;
+                    currentScore += points;
+                    setScore(currentScore);
+                    setFeedback({ type: 'PASS', text: `太棒了! +${points}` });
                 } else {
-                    newFails += 1;
-                    setFails(newFails);
-                    setFeedback({ type: 'FAIL', text: '算錯了!' });
+                    currentFails += 1;
+                    setFails(currentFails);
+                    setFeedback({ type: 'FAIL', text: isTimeout ? '時間到！' : '答錯囉！' });
                 }
 
+                const nextCount = questionCount + 1;
+                setQuestionCount(nextCount);
+                
                 setTimeout(() => {
-                    if (newFails >= 3 || questionCount >= 99) {
-                        setGameState('GAMEOVER');
-                        submitScore(newScore);
+                    if (currentFails >= 3 || nextCount >= 100) {
+                        saveScore(currentScore);
                     } else {
-                        setQuestionCount(prev => prev + 1);
                         generateQuestion();
                     }
-                }, 800);
+                }, 1000);
             };
 
             useEffect(() => {
@@ -164,89 +162,120 @@
                 if (gameState === 'PLAYING' && !feedback) {
                     timer = setInterval(() => {
                         setTimeLeft(prev => {
-                            if (prev <= 1) { handleAnswer('-1'); return 0; }
+                            if (prev <= 1) { handleAnswer(null); return 0; }
                             return prev - 1;
                         });
                     }, 1000);
                 }
                 return () => clearInterval(timer);
-            }, [gameState, feedback, currentQuestion]);
+            }, [gameState, feedback]);
 
-            const onKey = (num) => {
-                if (feedback) return;
+            const onKeyPress = (num) => {
+                if (feedback || gameState !== 'PLAYING') return;
                 if (num === 'DEL') setUserInput(prev => prev.slice(0, -1));
-                else if (num === 'OK') { if (userInput) handleAnswer(userInput); }
-                else if (userInput.length < 2) setUserInput(prev => prev + num);
+                else if (num === 'OK') { if (userInput !== '') handleAnswer(userInput); }
+                else if (userInput.length < 3) setUserInput(prev => prev + num);
             };
 
-            const reward = REWARDS.reduce((acc, curr) => (score >= curr.threshold ? curr : acc), REWARDS[0]);
+            const getRewardInfo = (s) => REWARDS.reduce((acc, curr) => (s >= curr.threshold ? curr : acc), REWARDS[0]);
+            
+            const startGame = () => {
+                if (!userName.trim()) return;
+                localStorage.setItem('saved_player_name', userName);
+                setScore(0);
+                setQuestionCount(0);
+                setFails(0);
+                setGameState('PLAYING');
+                generateQuestion();
+            };
 
             return (
-                <div className="flex flex-col items-center justify-center min-h-screen p-4">
-                    <div className="w-full max-w-sm bg-white rounded-[3rem] shadow-xl overflow-hidden border-8 border-pink-100 relative">
-                        {/* Header */}
-                        <div className="bg-pink-400 py-6 text-white text-center">
-                            <h1 className="text-2xl font-black">九九乘法挑戰</h1>
+                <div className="min-h-screen p-4 flex flex-col items-center justify-center">
+                    <div className="max-w-md w-full bg-white rounded-[2.5rem] shadow-2xl overflow-hidden border-4 border-pink-200">
+                        <div className="bg-pink-400 p-5 text-white text-center">
+                            <h1 className="text-2xl font-black tracking-tighter italic">🌸 九九乘法大挑戰 🌸</h1>
                         </div>
 
                         {gameState === 'LOBBY' && (
-                            <div className="p-8 space-y-6">
-                                <div className="text-center">
-                                    <p className="text-gray-500 text-sm mb-2">準備好了嗎？小勇者！</p>
+                            <div className="p-8 flex flex-col gap-6">
+                                <div className="space-y-2">
+                                    <p className="text-center text-gray-400 font-bold text-sm">請輸入勇者姓名</p>
                                     <input 
-                                        type="text" 
-                                        placeholder="輸入你的稱號"
-                                        className="w-full p-4 border-2 border-pink-100 rounded-2xl text-center text-lg focus:outline-none focus:border-pink-400"
-                                        value={userName}
-                                        onChange={e => setUserName(e.target.value)}
+                                        type="text" value={userName} onChange={(e) => setUserName(e.target.value)}
+                                        placeholder="你的大名..."
+                                        className="w-full border-4 border-pink-50 rounded-2xl px-4 py-4 text-center focus:outline-none focus:border-pink-300 text-xl font-bold shadow-inner transition-all"
                                     />
                                 </div>
-                                <button onClick={startGame} className="w-full bg-pink-500 text-white font-black py-4 rounded-2xl text-xl shadow-lg btn-active">開始遊戲</button>
+                                <button onClick={startGame} className="bg-pink-500 hover:bg-pink-600 text-white font-black py-5 rounded-2xl shadow-lg text-xl active:scale-95 transition-all">開始挑戰</button>
                                 
-                                <div className="pt-4">
-                                    <p className="text-pink-400 font-bold text-sm mb-2 text-center">🏆 前五名大師</p>
-                                    <div className="space-y-2">
-                                        {leaderboard.map((l, i) => (
-                                            <div key={i} className="flex justify-between bg-pink-50 p-2 px-4 rounded-xl text-sm">
-                                                <span className="font-bold text-gray-700">{l.name}</span>
-                                                <span className="text-pink-500 font-black">{l.score}分</span>
-                                            </div>
-                                        ))}
+                                <div className="bg-pink-50 rounded-2xl p-4 grid grid-cols-3 gap-2">
+                                    {REWARDS.slice(2, 8).map((r, i) => (
+                                        <div key={i} className="flex flex-col items-center bg-white p-2 rounded-xl shadow-sm border border-pink-100">
+                                            <span className="text-2xl">{r.icon}</span>
+                                            <span className="text-[10px] font-bold text-gray-500 mt-1">{r.threshold}pt</span>
+                                        </div>
+                                    ))}
+                                </div>
+
+                                <div className="mt-2">
+                                    <h2 className="font-black text-pink-600 border-b-4 border-pink-100 mb-4 pb-1 flex justify-between items-center">
+                                        <span>🏆 全球排行榜</span>
+                                        <span className="text-[10px] text-gray-400 uppercase">Top 10</span>
+                                    </h2>
+                                    <div className="space-y-2 max-h-48 overflow-y-auto pr-1">
+                                        {leaderboard.length > 0 ? leaderboard.map((entry, idx) => {
+                                            const reward = getRewardInfo(entry.score);
+                                            return (
+                                                <div key={idx} className={`flex justify-between items-center text-sm p-3 rounded-xl ${entry.uid === user?.uid ? 'bg-pink-100 border-2 border-pink-300' : 'bg-pink-50 border border-transparent'}`}>
+                                                    <div className="flex items-center gap-3">
+                                                        <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-black ${idx < 3 ? 'bg-yellow-400 text-white' : 'bg-pink-200 text-pink-500'}`}>{idx + 1}</span>
+                                                        <span className="text-xl">{reward.icon}</span>
+                                                        <span className="font-black text-gray-700">{entry.name}</span>
+                                                    </div>
+                                                    <span className="text-pink-600 font-black">{entry.score} 分</span>
+                                                </div>
+                                            );
+                                        }) : (
+                                            <div className="text-center py-8 text-gray-300 text-sm font-bold">還沒有人留下紀錄，快來搶第一！</div>
+                                        )}
                                     </div>
                                 </div>
                             </div>
                         )}
 
                         {gameState === 'PLAYING' && (
-                            <div className="p-6 text-center">
-                                <div className="flex justify-between items-center mb-4 text-xs font-bold text-gray-400 uppercase">
-                                    <span>第 {questionCount + 1} 題</span>
-                                    <span className="text-pink-500">積分: {score}</span>
+                            <div className="p-6">
+                                <div className="flex justify-between text-[10px] font-black mb-4 uppercase text-gray-400 tracking-widest">
+                                    <span>進度: {questionCount + 1}/100</span>
+                                    <span>得分: {score}</span>
                                 </div>
-                                
-                                <div className="flex justify-between items-center mb-6">
-                                    <div className="text-xl">{'❤️'.repeat(3 - fails)}</div>
-                                    <div className={`w-12 h-12 flex items-center justify-center rounded-full font-bold border-4 ${timeLeft < 4 ? 'border-red-400 text-red-400 animate-pulse' : 'border-pink-200 text-pink-400'}`}>
-                                        {timeLeft}
-                                    </div>
+                                <div className="flex justify-between items-center mb-6 px-2">
+                                    <div className="flex gap-1">{[...Array(3)].map((_, i) => <span key={i} className={i < (3 - fails) ? "opacity-100 text-2xl drop-shadow-sm" : "opacity-20 text-2xl"}>❤️</span>)}</div>
+                                    <div className={`text-xl font-mono font-black px-5 py-1 rounded-full shadow-inner ${timeLeft <= 3 ? 'bg-red-100 text-red-500 animate-pulse' : 'bg-gray-100 text-gray-500'}`}>{timeLeft}s</div>
                                 </div>
-
-                                <div className="h-24 flex items-center justify-center bg-gray-50 rounded-3xl mb-6">
+                                <div className="text-center h-32 flex items-center justify-center bg-gray-50 rounded-[2rem] border-4 border-dashed border-gray-200 mb-6 relative overflow-hidden">
                                     {feedback ? (
-                                        <div className={`text-4xl font-black ${feedback.type === 'PASS' ? 'text-green-500' : 'text-red-500'}`}>{feedback.text}</div>
+                                        <div className={`text-5xl font-black animate-bounce ${feedback.type === 'PASS' ? 'text-green-500' : 'text-red-500'}`}>{feedback.text}</div>
                                     ) : (
-                                        <div className="text-5xl font-black text-gray-800 tracking-tighter">
-                                            {currentQuestion.a} × {currentQuestion.b} = <span className="text-pink-500">{userInput || '?'}</span>
+                                        <div className="text-5xl font-black font-mono tracking-tighter flex items-center gap-3">
+                                            <span>{currentQuestion.a}</span>
+                                            <span className="text-pink-300">×</span>
+                                            <span>{currentQuestion.b}</span>
+                                            <span className="text-gray-300">=</span>
+                                            <span className="text-pink-500 underline underline-offset-8 min-w-[60px]">{userInput || '?'}</span>
                                         </div>
                                     )}
                                 </div>
-
-                                <div className="grid grid-cols-3 gap-2">
+                                <div className="grid grid-cols-3 gap-3">
                                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 'DEL', 0, 'OK'].map(k => (
                                         <button 
                                             key={k} 
-                                            onClick={() => onKey(k)}
-                                            className={`py-4 rounded-2xl text-xl font-bold btn-active shadow-sm ${k === 'OK' ? 'bg-green-400 text-white' : k === 'DEL' ? 'bg-gray-200 text-gray-500' : 'bg-white border border-gray-100 text-gray-700'}`}
+                                            onClick={() => onKeyPress(k)} 
+                                            className={`py-5 rounded-2xl text-2xl font-black shadow-md active:translate-y-1 transition-all ${
+                                                k === 'OK' ? 'bg-green-500 text-white shadow-green-200' : 
+                                                k === 'DEL' ? 'bg-red-400 text-white shadow-red-200' : 
+                                                'bg-white border-2 border-gray-50 hover:bg-gray-50 text-gray-700'
+                                            }`}
                                         >
                                             {k === 'DEL' ? '←' : k}
                                         </button>
@@ -255,18 +284,35 @@
                             </div>
                         )}
 
-                        {gameState === 'GAMEOVER' && (
-                            <div className="p-10 text-center space-y-6">
-                                <h2 className="text-3xl font-black text-gray-800">挑戰結束！</h2>
-                                <div className="py-8 bg-pink-50 rounded-[2.5rem] border-4 border-pink-100 relative overflow-hidden">
-                                    <div className="text-7xl mb-2">{reward.icon}</div>
-                                    <div className="text-xl font-black text-pink-600 mb-1">{reward.name}</div>
-                                    <div className="text-4xl font-black text-gray-700">{score} <span className="text-sm">分</span></div>
-                                </div>
-                                <button onClick={() => setGameState('LOBBY')} className="w-full bg-pink-500 text-white font-black py-4 rounded-2xl text-xl shadow-lg btn-active">再玩一次</button>
+                        {(gameState === 'GAMEOVER' || isSubmitting) && (
+                            <div className="p-10 text-center flex flex-col items-center gap-6 animate-in fade-in zoom-in duration-500">
+                                {isSubmitting ? (
+                                    <div className="py-20 flex flex-col items-center">
+                                        <div className="w-12 h-12 border-4 border-pink-500 border-t-transparent rounded-full animate-spin mb-4"></div>
+                                        <p className="font-black text-pink-500">正在傳送分數到雲端...</p>
+                                    </div>
+                                ) : (
+                                    <>
+                                        <h2 className="text-3xl font-black text-red-500 tracking-widest uppercase">Challenge Over</h2>
+                                        <div className="text-6xl font-black text-pink-500 drop-shadow-md my-2">{score} <small className="text-xl">pt</small></div>
+                                        <div className={`p-8 rounded-[2.5rem] border-8 border-white shadow-2xl w-full transform rotate-1 ${getRewardInfo(score).color}`}>
+                                            <div className="text-8xl mb-4 drop-shadow-sm">{getRewardInfo(score).icon}</div>
+                                            <p className="font-black text-2xl text-gray-800 uppercase tracking-widest">{getRewardInfo(score).name}</p>
+                                        </div>
+                                        <button 
+                                            onClick={() => setGameState('LOBBY')} 
+                                            className="w-full bg-pink-500 text-white font-black py-5 rounded-2xl text-xl shadow-lg hover:bg-pink-600 transition-all active:scale-95 mt-4"
+                                        >
+                                            返回大廳
+                                        </button>
+                                    </>
+                                )}
                             </div>
                         )}
                     </div>
+                    <footer className="mt-8 text-[10px] text-gray-400 font-bold tracking-widest text-center uppercase">
+                        <p>🌸 Fast correct +5pts | Try to get 500pts! 🌸</p>
+                    </footer>
                 </div>
             );
         }
