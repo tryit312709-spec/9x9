@@ -43,7 +43,7 @@
             firebase.initializeApp(firebaseConfig);
         }
 
-        // 安全地獲取實例，避免 "No Firebase App [DEFAULT]" 錯誤
+        // 安全地獲取實例
         const auth = firebase.apps.length ? firebase.auth() : null;
         const db = firebase.apps.length ? firebase.firestore() : null;
 
@@ -74,7 +74,7 @@
             const [startTime, setStartTime] = useState(0);
             const [isSubmitting, setIsSubmitting] = useState(false);
 
-            // 1. 處理身份驗證
+            // 1. 處理身份驗證 (必要：Firestore 寫入通常需要 Auth)
             useEffect(() => {
                 if (!auth) return;
                 const initAuth = async () => {
@@ -87,17 +87,23 @@
                     } catch (e) { console.error("Auth error", e); }
                 };
                 initAuth();
-                return auth.onAuthStateChanged(setUser);
+                const unsubscribe = auth.onAuthStateChanged((u) => {
+                    setUser(u);
+                });
+                return () => unsubscribe();
             }, []);
 
-            // 2. 排行榜監聽
+            // 2. 排行榜監聽 (嚴格遵守路徑規則)
             useEffect(() => {
                 if (!user || !db) return;
                 
                 try {
+                    // 路徑：/artifacts/{appId}/public/data/leaderboard
                     const lbCollection = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard');
+                    
                     const unsubscribe = lbCollection.onSnapshot((snapshot) => {
                         const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        // 在前端進行排序與過濾 (符合規則 2)
                         const sorted = data.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 10);
                         setLeaderboard(sorted);
                     }, (err) => {
@@ -120,19 +126,24 @@
             }, []);
 
             const saveScore = async (finalScore) => {
+                // 如果沒有登入或沒有資料庫，直接結束
                 if (!user || !db || !userName.trim()) {
                     setGameState('GAMEOVER');
                     return;
                 }
+
                 setIsSubmitting(true);
                 try {
+                    // 路徑：/artifacts/{appId}/public/data/leaderboard
                     const lbCollection = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard');
+                    
                     await lbCollection.add({
                         name: userName.trim(),
                         score: finalScore,
                         uid: user.uid,
                         createdAt: firebase.firestore.FieldValue.serverTimestamp()
                     });
+                    console.log("Score saved successfully!");
                 } catch (e) {
                     console.error("Error adding document: ", e);
                 } finally {
@@ -246,13 +257,13 @@
                                                     <div className="flex items-center gap-3">
                                                         <span className={`w-5 h-5 flex items-center justify-center rounded-full text-[10px] font-black ${idx < 3 ? 'bg-yellow-400 text-white' : 'bg-pink-200 text-pink-500'}`}>{idx + 1}</span>
                                                         <span className="text-xl">{reward.icon}</span>
-                                                        <span className="font-black text-gray-700">{entry.name}</span>
+                                                        <span className="font-black text-gray-700 truncate max-w-[100px]">{entry.name}</span>
                                                     </div>
                                                     <span className="text-pink-600 font-black">{entry.score} 分</span>
                                                 </div>
                                             );
                                         }) : (
-                                            <div className="text-center py-8 text-gray-300 text-sm font-bold">還沒有人留下紀錄，快來搶第一！</div>
+                                            <div className="text-center py-8 text-gray-300 text-sm font-bold">目前沒有紀錄 (需連線 Firebase)</div>
                                         )}
                                     </div>
                                 </div>
