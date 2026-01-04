@@ -43,6 +43,7 @@
         }
         const db = firebase.firestore();
         const auth = firebase.auth();
+        const APP_ID = "multiplication-challenge-v1";
 
         const REWARDS = [
             { threshold: 0, name: '初學者', icon: '🐣', color: 'bg-gray-50' },
@@ -69,11 +70,28 @@
 
             const getRewardInfo = (s) => REWARDS.reduce((acc, curr) => (s >= curr.threshold ? curr : acc), REWARDS[0]);
 
+            // 初始化驗證
             useEffect(() => {
-                auth.signInAnonymously().catch(e => console.error("登入失敗:", e));
+                const init = async () => {
+                    try {
+                        await auth.signInAnonymously();
+                    } catch (e) {
+                        console.error("登入失敗:", e);
+                    }
+                };
+                init();
                 const unsubscribeAuth = auth.onAuthStateChanged(u => setUser(u));
+                return () => unsubscribeAuth();
+            }, []);
 
-                const unsubscribeLB = db.collection('leaderboard')
+            // 取得排行榜 (僅在 user 存在後執行)
+            useEffect(() => {
+                if (!user) return;
+
+                // 修正後的路徑結構以符合安全規則常見規範
+                const leaderboardRef = db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('leaderboard');
+                
+                const unsubscribeLB = leaderboardRef
                     .orderBy('score', 'desc')
                     .limit(10)
                     .onSnapshot(
@@ -81,11 +99,13 @@
                             const list = snap.docs.map(doc => doc.data());
                             setLeaderboard(list);
                         },
-                        err => console.error("Firestore 監聽失敗:", err)
+                        err => {
+                            console.error("Firestore 監聽失敗:", err);
+                        }
                     );
 
-                return () => { unsubscribeAuth(); unsubscribeLB(); };
-            }, []);
+                return () => unsubscribeLB();
+            }, [user]);
 
             const generateQuestion = () => {
                 const a = Math.floor(Math.random() * 9) + 1;
@@ -111,13 +131,16 @@
                 if (!user || isSaving.current) return;
                 isSaving.current = true;
                 try {
-                    await db.collection('leaderboard').add({
+                    const leaderboardRef = db.collection('artifacts').doc(APP_ID).collection('public').doc('data').collection('leaderboard');
+                    await leaderboardRef.add({
                         name: userName,
                         score: finalScore,
                         uid: user.uid,
                         createdAt: firebase.firestore.FieldValue.serverTimestamp()
                     });
-                } catch (e) { console.error(e); }
+                } catch (e) { 
+                    console.error("寫入分數失敗:", e); 
+                }
             };
 
             const handleAnswer = (val) => {
@@ -169,8 +192,8 @@
             };
 
             const handleReturnToLobby = () => {
-                setUserName(''); // 清空姓名
-                localStorage.removeItem('math_user_name'); // 同步移除快取
+                setUserName(''); 
+                localStorage.removeItem('math_user_name'); 
                 setGameState('LOBBY');
             };
 
@@ -214,7 +237,9 @@
                                 <div className="bg-pink-50/40 rounded-[2rem] p-4 border-2 border-white shadow-inner">
                                     <p className="text-center text-pink-400 font-black text-[11px] mb-3 uppercase tracking-[0.2em]">🏆 全球排行榜</p>
                                     <div className="space-y-2">
-                                        {leaderboard.length === 0 ? (
+                                        {!user ? (
+                                            <div className="text-center py-6 text-gray-400 text-xs italic animate-pulse">連線中...</div>
+                                        ) : leaderboard.length === 0 ? (
                                             <div className="text-center py-6 text-gray-300 text-xs italic">尚未有冒險者紀錄</div>
                                         ) : (
                                             leaderboard.map((l, i) => {
@@ -238,7 +263,6 @@
 
                         {gameState === 'PLAYING' && (
                             <div className="p-4 flex-1 flex flex-col justify-between animate-fade-in">
-                                {/* 頂部資訊欄 */}
                                 <div className="flex justify-between items-center mb-4">
                                     <div className="flex flex-col gap-1">
                                         <div className="bg-blue-50 px-3 py-1 rounded-full text-blue-600 font-black text-[10px] border border-blue-100">進度: {questionCount + 1} / 100</div>
@@ -247,7 +271,6 @@
                                     <div className="flex gap-1">{[...Array(3)].map((_, i) => <span key={i} className={`text-xl ${i < (3 - fails) ? "opacity-100" : "opacity-20"}`}>❤️</span>)}</div>
                                 </div>
 
-                                {/* 題目顯示區 */}
                                 <div className="text-center bg-gray-50 rounded-3xl py-10 border-4 border-white shadow-inner mb-6 relative">
                                     <div className={`absolute -top-4 left-1/2 -translate-x-1/2 bg-white border-2 w-10 h-10 rounded-full flex items-center justify-center font-bold ${timeLeft <= 3 ? 'border-red-500 text-red-500 animate-pulse' : 'border-pink-400 text-pink-500'}`}>{timeLeft}</div>
                                     {feedback ? (
@@ -259,7 +282,6 @@
                                     )}
                                 </div>
 
-                                {/* 數字鍵盤 */}
                                 <div className="grid grid-cols-3 gap-2">
                                     {[1, 2, 3, 4, 5, 6, 7, 8, 9, 'DEL', 0, 'OK'].map(k => (
                                         <button key={k} onClick={() => onKey(k)} className={`py-4 rounded-2xl text-xl font-bold transition-all btn-active ${k === 'OK' ? 'bg-green-500 text-white shadow-lg shadow-green-100' : k === 'DEL' ? 'bg-red-400 text-white shadow-lg shadow-red-100' : 'bg-white border-2 border-gray-100 text-gray-700 active:bg-gray-50'}`}>{k === 'DEL' ? '←' : k}</button>
