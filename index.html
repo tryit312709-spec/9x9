@@ -27,10 +27,9 @@
         const { useState, useEffect, useCallback } = React;
 
         // --- Firebase 初始化 ---
-        // 修復：增加對環境變數的檢查，避免 ReferenceError
         let firebaseConfig = {};
         try {
-            if (typeof __firebase_config !== 'undefined') {
+            if (typeof __firebase_config !== 'undefined' && __firebase_config) {
                 firebaseConfig = JSON.parse(__firebase_config);
             }
         } catch (e) {
@@ -39,12 +38,14 @@
 
         const appId = typeof __app_id !== 'undefined' ? __app_id : 'multiplication-master';
 
-        // 使用 compat 模式初始化
+        // 確保只有在有 API Key 的情況下才初始化
         if (firebaseConfig.apiKey && !firebase.apps.length) {
             firebase.initializeApp(firebaseConfig);
         }
-        const auth = firebase.auth();
-        const db = firebase.firestore();
+
+        // 安全地獲取實例，避免 "No Firebase App [DEFAULT]" 錯誤
+        const auth = firebase.apps.length ? firebase.auth() : null;
+        const db = firebase.apps.length ? firebase.firestore() : null;
 
         const REWARDS = [
             { threshold: 0, name: '初學者', icon: '🐣', color: 'bg-gray-100' },
@@ -73,8 +74,9 @@
             const [startTime, setStartTime] = useState(0);
             const [isSubmitting, setIsSubmitting] = useState(false);
 
-            // 1. 處理身份驗證 (Rule 3)
+            // 1. 處理身份驗證
             useEffect(() => {
+                if (!auth) return;
                 const initAuth = async () => {
                     try {
                         if (typeof __initial_auth_token !== 'undefined' && __initial_auth_token) {
@@ -88,21 +90,23 @@
                 return auth.onAuthStateChanged(setUser);
             }, []);
 
-            // 2. 排行榜監聽 (Rule 1 & 2)
+            // 2. 排行榜監聽
             useEffect(() => {
-                if (!user) return;
+                if (!user || !db) return;
                 
-                const lbCollection = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard');
-                
-                const unsubscribe = lbCollection.onSnapshot((snapshot) => {
-                    const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
-                    const sorted = data.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 10);
-                    setLeaderboard(sorted);
-                }, (err) => {
-                    console.error("Firestore snapshot error:", err);
-                });
-
-                return () => unsubscribe();
+                try {
+                    const lbCollection = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard');
+                    const unsubscribe = lbCollection.onSnapshot((snapshot) => {
+                        const data = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+                        const sorted = data.sort((a, b) => (b.score || 0) - (a.score || 0)).slice(0, 10);
+                        setLeaderboard(sorted);
+                    }, (err) => {
+                        console.error("Firestore snapshot error:", err);
+                    });
+                    return () => unsubscribe();
+                } catch (e) {
+                    console.error("Leaderboard init error", e);
+                }
             }, [user]);
 
             const generateQuestion = useCallback(() => {
@@ -116,7 +120,10 @@
             }, []);
 
             const saveScore = async (finalScore) => {
-                if (!user || !userName.trim()) return;
+                if (!user || !db || !userName.trim()) {
+                    setGameState('GAMEOVER');
+                    return;
+                }
                 setIsSubmitting(true);
                 try {
                     const lbCollection = db.collection('artifacts').doc(appId).collection('public').doc('data').collection('leaderboard');
